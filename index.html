@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Spíž – inventář a spotřeba</title>
+<meta name="description" content="Inventář potravin s hlídáním data spotřeby, skenováním kódů a synchronizací přes web.">
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1a2b26">
+<link rel="icon" href="favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Spíž">
+
+<style>
+  :root{
+    /* Paleta: spíž / chladnička – od čerstvé po prošlé */
+    --pine:#1a2b26;      /* tmavá zeleň (lišta) */
+    --pine-2:#22362f;
+    --paper:#f3f6f0;     /* police / plocha */
+    --card:#ffffff;
+    --fresh:#3aa87a;     /* v pořádku */
+    --fresh-ink:#1c6b4a;
+    --amber:#e8a846;     /* spotřeba se blíží */
+    --amber-ink:#9a6512;
+    --rust:#d1573f;      /* prošlé */
+    --rust-ink:#a13322;
+    --ink:#14231f;
+    --muted:#5f6f68;
+    --line:#e3e8e0;
+    --line-2:#d3dccf;
+    --shadow:0 1px 2px rgba(20,35,31,.06), 0 8px 24px rgba(20,35,31,.06);
+    --radius:16px;
+    --tap:#eef3ea;
+    --safe-b:env(safe-area-inset-bottom, 0px);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,system-ui,sans-serif;
+    color:var(--ink);
+    background:var(--paper);
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    overscroll-behavior-y:none;
+  }
+  button{font-family:inherit;cursor:pointer}
+  input,select,textarea{font-family:inherit;font-size:16px} /* 16px brání zoomu na iOS */
+
+  /* ---------- Horní lišta ---------- */
+  .appbar{
+    position:sticky;top:0;z-index:20;
+    background:var(--pine);color:#eaf1ea;
+    padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 12px;
+  }
+  .appbar-row{display:flex;align-items:center;gap:10px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:-.02em;font-size:20px}
+  .brand .mark{width:26px;height:26px;border-radius:7px;background:var(--fresh);
+    display:grid;place-items:center;color:#08281c;font-size:15px;box-shadow:inset 0 -2px 0 rgba(0,0,0,.15)}
+  .sync-chip{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:12.5px;
+    color:#bcd0c6;background:rgba(255,255,255,.07);padding:6px 10px;border-radius:999px;border:0}
+  .sync-dot{width:8px;height:8px;border-radius:50%;background:#7fa793}
+  .sync-dot.on{background:var(--fresh)}
+  .sync-dot.warn{background:var(--amber)}
+
+  /* Přehledové pilulky (semafor) */
+  .summary{display:flex;gap:8px;margin-top:12px}
+  .pill{flex:1;border-radius:12px;padding:9px 10px;text-align:left;border:0;color:#08281c;line-height:1.05}
+  .pill b{display:block;font-size:20px;font-weight:800}
+  .pill span{font-size:11.5px;font-weight:600;opacity:.85}
+  .pill.rust{background:#f4d3cb;color:var(--rust-ink)}
+  .pill.amber{background:#f6e6c4;color:var(--amber-ink)}
+  .pill.fresh{background:#cdeadd;color:var(--fresh-ink)}
+  .pill.active{outline:2px solid rgba(255,255,255,.55);outline-offset:1px}
+
+  /* ---------- Obsah ---------- */
+  main{max-width:640px;margin:0 auto;padding:14px 14px calc(96px + var(--safe-b));}
+  .view{display:none;animation:fade .18s ease both}
+  .view.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){.view{animation:none}}
+
+  h2.section{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 2px 8px}
+
+  /* Vyhledávání + filtry */
+  .toolbar{display:flex;flex-direction:column;gap:10px;margin-bottom:6px}
+  .search{position:relative}
+  .search input{width:100%;padding:12px 14px 12px 40px;border:1px solid var(--line-2);border-radius:12px;background:var(--card)}
+  .search svg{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--muted)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{border:1px solid var(--line-2);background:var(--card);color:var(--ink);
+    padding:8px 13px;border-radius:999px;font-size:13.5px;font-weight:600}
+  .chip.on{background:var(--pine);color:#eaf1ea;border-color:var(--pine)}
+  .sortline{display:flex;align-items:center;gap:8px}
+  .sortline select{flex:1;padding:10px 12px;border:1px solid var(--line-2);border-radius:12px;background:var(--card)}
+
+  /* Karta položky */
+  .item{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:12px;margin:10px 0;display:flex;gap:12px;align-items:stretch}
+  .badge{flex:0 0 66px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:8px 4px;text-align:center;line-height:1.05}
+  .badge b{font-size:22px;font-weight:800}
+  .badge small{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-top:1px}
+  .badge.rust{background:#fbe7e1;color:var(--rust-ink)}
+  .badge.amber{background:#fbeecd;color:var(--amber-ink)}
+  .badge.fresh{background:#d9f0e5;color:var(--fresh-ink)}
+  .item-main{flex:1;min-width:0}
+  .item-name{font-weight:700;font-size:16.5px;letter-spacing:-.01em;word-break:break-word}
+  .item-meta{color:var(--muted);font-size:13px;margin-top:2px;display:flex;flex-wrap:wrap;gap:4px 10px}
+  .item-note{color:var(--muted);font-size:12.5px;margin-top:4px;font-style:italic}
+  /* Ukazatel čerstvosti */
+  .fresh-bar{height:7px;border-radius:999px;background:#edf1ea;margin-top:9px;overflow:hidden}
+  .fresh-bar>i{display:block;height:100%;border-radius:999px;transition:width .3s ease}
+  .fresh-bar.rust>i{background:var(--rust)}
+  .fresh-bar.amber>i{background:linear-gradient(90deg,var(--fresh),var(--amber))}
+  .fresh-bar.fresh>i{background:linear-gradient(90deg,#66c79c,var(--fresh))}
+  .item-actions{display:flex;align-items:center;gap:8px;margin-top:10px}
+  .qtybox{display:flex;align-items:center;gap:0;border:1px solid var(--line-2);border-radius:10px;overflow:hidden}
+  .qtybox button{width:34px;height:32px;border:0;background:var(--tap);color:var(--ink);font-size:18px;font-weight:700;line-height:1}
+  .qtybox span{min-width:44px;text-align:center;font-size:14px;font-weight:700;padding:0 4px}
+  .icon-btn{margin-left:auto;border:1px solid var(--line-2);background:var(--card);border-radius:10px;
+    width:36px;height:34px;display:grid;place-items:center;color:var(--muted)}
+  .icon-btn.danger{color:var(--rust)}
+
+  .empty{text-align:center;color:var(--muted);padding:48px 20px}
+  .empty .big{font-size:40px;margin-bottom:8px}
+  .empty h3{margin:0 0 6px;color:var(--ink)}
+
+  /* ---------- Formuláře / karty sekcí ---------- */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin:12px 0}
+  .card h3{margin:0 0 4px;font-size:16px}
+  .card p.hint{margin:0 0 12px;color:var(--muted);font-size:13.5px;line-height:1.45}
+  label.f{display:block;font-size:13px;font-weight:600;color:var(--ink);margin:12px 0 5px}
+  .field{width:100%;padding:12px 13px;border:1px solid var(--line-2);border-radius:12px;background:#fbfcfa}
+  .row{display:flex;gap:10px}
+  .row>div{flex:1}
+  textarea.field{min-height:60px;resize:vertical}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    padding:13px 16px;border-radius:12px;border:0;font-weight:700;font-size:15px;width:100%}
+  .btn.primary{background:var(--pine);color:#eaf1ea}
+  .btn.fresh{background:var(--fresh);color:#08281c}
+  .btn.ghost{background:var(--card);border:1px solid var(--line-2);color:var(--ink)}
+  .btn.rust{background:#fbe7e1;color:var(--rust-ink)}
+  .btn+.btn{margin-top:9px}
+  .btn:disabled{opacity:.5}
+  .btn-row{display:flex;gap:9px}
+  .btn-row .btn{margin-top:0}
+
+  /* Skener */
+  #reader{width:100%;border-radius:12px;overflow:hidden;background:#0d1512;min-height:60px}
+  #reader video{border-radius:12px}
+  .scan-hint{font-size:12.5px;color:var(--muted);text-align:center;margin-top:8px}
+  .code-found{display:none;align-items:center;gap:8px;background:#d9f0e5;color:var(--fresh-ink);
+    padding:10px 12px;border-radius:10px;font-weight:700;font-size:14px;margin-top:10px}
+  .code-found.show{display:flex}
+
+  /* Info řádek klíč/hodnota */
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .kv:last-child{border-bottom:0}
+  .kv .k{color:var(--muted);font-size:13.5px}
+  .kv .v{font-weight:600;font-size:13.5px;text-align:right}
+
+  .switch{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0}
+  .switch .lbl{font-size:14.5px;font-weight:600}
+  .switch .sub{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .toggle{position:relative;width:48px;height:28px;flex:0 0 auto}
+  .toggle input{opacity:0;width:100%;height:100%;margin:0}
+  .toggle .track{position:absolute;inset:0;background:var(--line-2);border-radius:999px;transition:.2s}
+  .toggle .knob{position:absolute;top:3px;left:3px;width:22px;height:22px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+  .toggle input:checked+.track{background:var(--fresh)}
+  .toggle input:checked~.knob{left:23px}
+
+  /* ---------- Spodní navigace ---------- */
+  nav.tabbar{
+    position:fixed;left:0;right:0;bottom:0;z-index:30;
+    background:rgba(255,255,255,.94);backdrop-filter:saturate(1.4) blur(10px);
+    border-top:1px solid var(--line);
+    display:flex;padding:6px 6px calc(6px + var(--safe-b));
+    max-width:640px;margin:0 auto;
+  }
+  .tab{flex:1;border:0;background:transparent;color:var(--muted);
+    display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 2px;border-radius:12px;font-size:11px;font-weight:600}
+  .tab svg{width:23px;height:23px}
+  .tab.on{color:var(--pine)}
+  .tab.on .dotbadge{background:var(--rust)}
+  .dotbadge{position:absolute;transform:translate(12px,-4px);min-width:16px;height:16px;padding:0 4px;border-radius:999px;
+    background:var(--rust);color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center}
+  .dotbadge.show{display:inline-flex}
+  .tab .ico-wrap{position:relative}
+
+  /* ---------- Toast ---------- */
+  #toast{position:fixed;left:50%;bottom:calc(88px + var(--safe-b));transform:translateX(-50%) translateY(20px);
+    background:var(--ink);color:#fff;padding:12px 16px;border-radius:12px;font-size:14px;font-weight:600;
+    box-shadow:0 8px 30px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:.25s;z-index:50;max-width:90vw;text-align:center}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* Modál (editace / potvrzení) */
+  .modal{position:fixed;inset:0;z-index:60;display:none;align-items:flex-end;justify-content:center;
+    background:rgba(10,18,15,.45)}
+  .modal.show{display:flex}
+  .sheet{background:var(--paper);width:100%;max-width:640px;border-radius:20px 20px 0 0;padding:18px 16px calc(18px + var(--safe-b));
+    max-height:90vh;overflow:auto;animation:up .2s ease both}
+  @keyframes up{from{transform:translateY(30px)}to{transform:none}}
+  .sheet h3{margin:0 0 12px;font-size:18px}
+  .sheet-handle{width:40px;height:4px;background:var(--line-2);border-radius:999px;margin:0 auto 12px}
+
+  .divider{height:1px;background:var(--line);margin:14px 0}
+  .warnbox{background:#fbeecd;color:var(--amber-ink);border-radius:12px;padding:11px 13px;font-size:12.5px;line-height:1.5;margin-top:10px}
+  .file-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  #reader-file{position:absolute;width:1px;height:1px;overflow:hidden;left:-9999px}
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="appbar-row">
+    <div class="brand"><span class="mark">✓</span> Spíž</div>
+    <button class="sync-chip" id="syncChip" onclick="prepni('sync')">
+      <span class="sync-dot" id="syncDot"></span><span id="syncText">Jen zařízení</span>
+    </button>
+  </div>
+  <div class="summary">
+    <button class="pill rust"  data-filter="prosle" onclick="filtrujZeSouhrnu('prosle')"><b id="cntProsle">0</b><span>prošlé</span></button>
+    <button class="pill amber" data-filter="brzy"   onclick="filtrujZeSouhrnu('brzy')"><b id="cntBrzy">0</b><span>brzy skončí</span></button>
+    <button class="pill fresh" data-filter="ok"     onclick="filtrujZeSouhrnu('ok')"><b id="cntOk">0</b><span>v pořádku</span></button>
+  </div>
+</header>
+
+<main>
+  <!-- ========== INVENTÁŘ ========== -->
+  <section class="view active" id="view-inventar">
+    <div class="toolbar">
+      <div class="search">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="hledej" type="search" placeholder="Hledat název nebo kód…" oninput="vykresliInventar()">
+      </div>
+      <div class="chips" id="filtrChips">
+        <button class="chip on" data-f="vse" onclick="nastavFiltr('vse')">Vše</button>
+        <button class="chip" data-f="prosle" onclick="nastavFiltr('prosle')">Prošlé</button>
+        <button class="chip" data-f="brzy" onclick="nastavFiltr('brzy')">Brzy</button>
+        <button class="chip" data-f="ok" onclick="nastavFiltr('ok')">V pořádku</button>
+      </div>
+      <div class="sortline">
+        <label class="f" style="margin:0;color:var(--muted)">Řadit</label>
+        <select id="razeni" onchange="vykresliInventar()">
+          <option value="spotreba">Podle spotřeby (nejdřív hrozící)</option>
+          <option value="nazev">Podle názvu</option>
+          <option value="nove">Naposledy přidané</option>
+        </select>
+      </div>
+    </div>
+    <div id="seznam"></div>
+  </section>
+
+  <!-- ========== PŘIDAT ========== -->
+  <section class="view" id="view-pridat">
+    <div class="card">
+      <h3>Naskenovat kód</h3>
+      <p class="hint">Namiř foťák na čárový kód. Funguje na PC, iOS i Androidu (potřebuje povolení kamery a HTTPS – GitHub Pages ho má).</p>
+      <div id="reader"></div>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn fresh" id="scanBtn" onclick="prepniSkener()">Spustit kameru</button>
+        <button class="btn ghost" onclick="document.getElementById('fotoInput').click()">Vyfotit / z galerie</button>
+      </div>
+      <input id="fotoInput" class="file-hidden" type="file" accept="image/*" capture="environment" onchange="skenujZFotky(event)">
+      <div class="code-found" id="codeFound">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"/></svg>
+        <span id="codeFoundTxt"></span>
+      </div>
+      <p class="scan-hint">Po načtení kódu se vyplní formulář níže. Můžeš dopsat datum spotřeby a uložit.</p>
+    </div>
+
+    <div class="card">
+      <h3 id="formTitle">Ruční zadání položky</h3>
+      <p class="hint">Hvězdička = povinné. Bez data spotřeby položku uložit nepůjde.</p>
+
+      <label class="f" for="fNazev">Název *</label>
+      <input class="field" id="fNazev" list="katNazvy" placeholder="Např. Mléko polotučné 1,5 %">
+
+      <div class="row">
+        <div>
+          <label class="f" for="fKod">Čárový kód</label>
+          <input class="field" id="fKod" inputmode="numeric" placeholder="naskenuje se sám">
+        </div>
+        <div>
+          <label class="f" for="fKategorie">Kategorie</label>
+          <input class="field" id="fKategorie" list="katList" placeholder="Ostatní">
+          <datalist id="katList">
+            <option>Mléčné</option><option>Pečivo</option><option>Maso a uzeniny</option>
+            <option>Zelenina</option><option>Ovoce</option><option>Nápoje</option>
+            <option>Trvanlivé</option><option>Mražené</option><option>Koření</option><option>Ostatní</option>
+          </datalist>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label class="f" for="fMnozstvi">Množství</label>
+          <input class="field" id="fMnozstvi" type="number" min="0" step="1" value="1" inputmode="decimal">
+        </div>
+        <div>
+          <label class="f" for="fJednotka">Jednotka</label>
+          <select class="field" id="fJednotka">
+            <option>ks</option><option>balení</option><option>g</option><option>kg</option><option>ml</option><option>l</option>
+          </select>
+        </div>
+      </div>
+
+      <label class="f" for="fSpotreba">Datum spotřeby *</label>
+      <input class="field" id="fSpotreba" type="date">
+
+      <label class="f" for="fPoznamka">Poznámka</label>
+      <textarea class="field" id="fPoznamka" placeholder="Např. otevřené, spotřebovat do 3 dnů"></textarea>
+
+      <div style="height:12px"></div>
+      <button class="btn primary" onclick="ulozZFormulare()">Uložit položku</button>
+      <button class="btn ghost" onclick="vycistiFormular()">Vyčistit formulář</button>
+    </div>
+  </section>
+
+  <!-- ========== SYNC / WEB ========== -->
+  <section class="view" id="view-sync">
+    <div class="card">
+      <h3>Data na webu</h3>
+      <p class="hint">Aplikace umí stáhnout nejnovější inventář ze souboru <b>data.json</b> na webu a naopak tvůj aktuální inventář na web nahrát.</p>
+      <div class="kv"><span class="k">Položek v zařízení</span><span class="v" id="syncCntLocal">0</span></div>
+      <div class="kv"><span class="k">Naposledy upraveno</span><span class="v" id="syncLast">—</span></div>
+      <div class="kv"><span class="k">Web (GitHub)</span><span class="v" id="syncGh">nenastaveno</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Stáhnout z webu</h3>
+      <p class="hint">Načte <b>data.json</b> uložený vedle aplikace na GitHub Pages.</p>
+      <div class="btn-row">
+        <button class="btn ghost" onclick="stahniZWebu('slouc')">Sloučit</button>
+        <button class="btn ghost" onclick="stahniZWebu('nahrad')">Nahradit</button>
+      </div>
+      <p class="scan-hint" style="margin-top:8px">Sloučit = doplní/aktualizuje položky. Nahradit = přepíše tvůj inventář verzí z webu.</p>
+    </div>
+
+    <div class="card">
+      <h3>Nahrát na web (GitHub)</h3>
+      <p class="hint">Zapíše aktuální inventář přímo do <b>data.json</b> v tvém repozitáři. Nejdřív vyplň přístup v Nastavení.</p>
+      <button class="btn fresh" id="ghUploadBtn" onclick="nahrajNaGithub()">Nahrát na web</button>
+      <div class="warnbox">Bez GitHubu můžeš data přenést i ručně: dole je <b>Export</b> souboru <code>data.json</code>, který v repozitáři nahradíš / commitneš.</div>
+    </div>
+
+    <div class="card">
+      <h3>Soubor (záloha / ruční přenos)</h3>
+      <div class="btn-row">
+        <button class="btn ghost" onclick="exportSouboru()">Exportovat data.json</button>
+        <button class="btn ghost" onclick="document.getElementById('importInput').click()">Importovat soubor</button>
+      </div>
+      <input id="importInput" class="file-hidden" type="file" accept="application/json,.json" onchange="importSouboru(event)">
+    </div>
+  </section>
+
+  <!-- ========== NASTAVENÍ ========== -->
+  <section class="view" id="view-nastaveni">
+    <div class="card">
+      <h3>Upozornění na spotřebu</h3>
+      <label class="f" for="prahDni">Upozornit, kolik dní předem</label>
+      <input class="field" id="prahDni" type="number" min="0" step="1" value="3" onchange="ulozNastaveni();prepocitejSouhrn()">
+
+      <div class="switch">
+        <div><div class="lbl">Systémová oznámení</div><div class="sub">Zapne upozornění mimo aplikaci (dle prohlížeče).</div></div>
+        <label class="toggle"><input type="checkbox" id="notifSwitch" onchange="prepniNotifikace()"><span class="track"></span><span class="knob"></span></label>
+      </div>
+      <button class="btn ghost" onclick="zkontrolujUpozorneni(true)">Zkontrolovat spotřebu teď</button>
+      <div class="warnbox" id="notifNote">Na iPhonu fungují oznámení jen po přidání na plochu (Sdílet → Přidat na plochu) a v iOS 16.4+. Automatická oznámení „na pozadí“ nejsou u statického webu zaručená — nejspolehlivěji se zkontroluje při otevření aplikace.</div>
+    </div>
+
+    <div class="card">
+      <h3>Skenování</h3>
+      <div class="switch">
+        <div><div class="lbl">Dohledat název podle kódu</div><div class="sub">Zkusí najít název v databázi Open Food Facts (potřebuje internet).</div></div>
+        <label class="toggle"><input type="checkbox" id="offSwitch" checked onchange="ulozNastaveni()"><span class="track"></span><span class="knob"></span></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Web (GitHub) synchronizace</h3>
+      <p class="hint">Vyplň, jen když chceš nahrávat přímo z aplikace. Token se ukládá lokálně v tomto prohlížeči.</p>
+      <label class="f" for="ghOwner">Uživatel / organizace</label>
+      <input class="field" id="ghOwner" placeholder="např. magda" autocapitalize="off" spellcheck="false">
+      <div class="row">
+        <div><label class="f" for="ghRepo">Repozitář</label><input class="field" id="ghRepo" placeholder="spiz" autocapitalize="off" spellcheck="false"></div>
+        <div><label class="f" for="ghBranch">Větev</label><input class="field" id="ghBranch" placeholder="main" autocapitalize="off" spellcheck="false"></div>
+      </div>
+      <label class="f" for="ghPath">Cesta k souboru</label>
+      <input class="field" id="ghPath" placeholder="data.json" autocapitalize="off" spellcheck="false">
+      <label class="f" for="ghToken">Přístupový token (PAT)</label>
+      <input class="field" id="ghToken" type="password" placeholder="ghp_… / github_pat_…" autocapitalize="off" spellcheck="false">
+      <div style="height:12px"></div>
+      <button class="btn primary" onclick="ulozNastaveni(true)">Uložit nastavení webu</button>
+      <div class="warnbox">Vytvoř si <b>fine-grained</b> token s právem <b>Contents: Read and write</b> jen pro tento repozitář. Token je uložený pouze v tomto prohlížeči (localStorage) — nesdílej zařízení, na kterém ho máš.</div>
+    </div>
+
+    <div class="card">
+      <h3>Data</h3>
+      <div class="kv"><span class="k">Počet položek</span><span class="v" id="setCnt">0</span></div>
+      <div style="height:10px"></div>
+      <button class="btn rust" onclick="smazVse()">Smazat všechna data</button>
+    </div>
+
+    <div class="card">
+      <h3>O aplikaci</h3>
+      <p class="hint">Spíž je samostatná offline PWA. Data jsou uložená v tomto zařízení; na web se přenášejí přes soubor <code>data.json</code>. Verze dat: 1.</p>
+    </div>
+  </section>
+</main>
+
+<!-- Spodní navigace -->
+<nav class="tabbar">
+  <button class="tab on" id="tab-inventar" onclick="prepni('inventar')">
+    <span class="ico-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span class="dotbadge" id="tabBadge">0</span></span>
+    Inventář
+  </button>
+  <button class="tab" id="tab-pridat" onclick="prepni('pridat')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M5 12h14"/></svg>
+    Přidat
+  </button>
+  <button class="tab" id="tab-sync" onclick="prepni('sync')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 12a9 9 0 0 1-9 9M3 12a9 9 0 0 1 9-9"/><path d="M3 4v5h5M21 20v-5h-5"/></svg>
+    Web
+  </button>
+  <button class="tab" id="tab-nastaveni" onclick="prepni('nastaveni')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.6 15H3.5a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 5 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9 4.6h.1A1.6 1.6 0 0 0 11 3.5V3.5a2 2 0 1 1 4 0v.1A1.6 1.6 0 0 0 17 5a1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.6 1.6 0 0 0 21 9v.1a1.6 1.6 0 0 0 0 3.8z"/></svg>
+    Nastavení
+  </button>
+</nav>
+
+<datalist id="katNazvy"></datalist>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="reader-file"></div>
+
+<!-- Modál pro editaci položky -->
+<div class="modal" id="editModal">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h3>Upravit položku</h3>
+    <input type="hidden" id="eId">
+    <label class="f" for="eNazev">Název *</label>
+    <input class="field" id="eNazev">
+    <div class="row">
+      <div><label class="f" for="eKod">Čárový kód</label><input class="field" id="eKod" inputmode="numeric"></div>
+      <div><label class="f" for="eKategorie">Kategorie</label><input class="field" id="eKategorie" list="katList"></div>
+    </div>
+    <div class="row">
+      <div><label class="f" for="eMnozstvi">Množství</label><input class="field" id="eMnozstvi" type="number" min="0" step="1" inputmode="decimal"></div>
+      <div><label class="f" for="eJednotka">Jednotka</label>
+        <select class="field" id="eJednotka"><option>ks</option><option>balení</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select>
+      </div>
+    </div>
+    <label class="f" for="eSpotreba">Datum spotřeby *</label>
+    <input class="field" id="eSpotreba" type="date">
+    <label class="f" for="ePoznamka">Poznámka</label>
+    <textarea class="field" id="ePoznamka"></textarea>
+    <div style="height:14px"></div>
+    <button class="btn primary" onclick="ulozEditaci()">Uložit změny</button>
+    <button class="btn ghost" onclick="zavriModal()">Zrušit</button>
+  </div>
+</div>
+
+<script src="html5-qrcode.min.js"></script>
+<script>
+/* =========================================================================
+   Spíž – inventář a spotřeba. Vše v jednom souboru, offline PWA.
+   Data se ukládají do localStorage; na web se přenášejí přes data.json.
+   ========================================================================= */
+
+const KLIC_DATA = 'spiz_inventar_v1';
+const KLIC_NAST = 'spiz_nastaveni_v1';
+const DEN = 86400000;
+
+let stav = { polozky: [], aktualizovano: null };
+let nast = {
+  prahDni: 3,
+  notifikace: false,
+  offLookup: true,
+  gh: { owner:'', repo:'', branch:'main', path:'data.json', token:'' }
+};
+let aktivniFiltr = 'vse';
+let skener = null;      // instance Html5Qrcode
+let skenerBezi = false;
+
+/* ---------- Ukládání / načítání ---------- */
+function nactiVse(){
+  try{ const d = JSON.parse(localStorage.getItem(KLIC_DATA)); if(d&&Array.isArray(d.polozky)) stav = d; }catch(e){}
+  try{ const n = JSON.parse(localStorage.getItem(KLIC_NAST)); if(n) nast = Object.assign(nast, n, {gh:Object.assign(nast.gh, n.gh||{})}); }catch(e){}
+}
+function ulozData(){
+  stav.aktualizovano = new Date().toISOString();
+  localStorage.setItem(KLIC_DATA, JSON.stringify(stav));
+  osvezVse();
+}
+function ulozNastaveniZUI(){
+  nast.prahDni = Math.max(0, parseInt(document.getElementById('prahDni').value||'3',10));
+  nast.offLookup = document.getElementById('offSwitch').checked;
+  nast.gh = {
+    owner: val('ghOwner').trim(), repo: val('ghRepo').trim(),
+    branch: (val('ghBranch').trim()||'main'), path: (val('ghPath').trim()||'data.json'),
+    token: val('ghToken')
+  };
+  localStorage.setItem(KLIC_NAST, JSON.stringify(nast));
+}
+function ulozNastaveni(zUlozit){
+  ulozNastaveniZUI();
+  if(zUlozit){ toast('Nastavení uloženo'); }
+  osvezVse();
+}
+function val(id){ return document.getElementById(id).value; }
+
+/* ---------- Pomůcky: datum a stav čerstvosti ---------- */
+function dneso(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+function naDatum(iso){ const d=new Date(iso+'T00:00:00'); d.setHours(0,0,0,0); return d; }
+function dnyDoSpotreby(iso){ return Math.round((naDatum(iso)-dneso())/DEN); }
+
+function stavPolozky(p){
+  const d = dnyDoSpotreby(p.datumSpotreby);
+  if(d < 0) return 'prosle';
+  if(d <= nast.prahDni) return 'brzy';
+  return 'ok';
+}
+function popisDnu(iso){
+  const d = dnyDoSpotreby(iso);
+  if(d < 0) return {big:Math.abs(d), small:'dní zpět', word:'PROŠLÉ'};
+  if(d === 0) return {big:'!', small:'', word:'DNES'};
+  if(d === 1) return {big:1, small:'den', word:''};
+  return {big:d, small:(d>=2&&d<=4?'dny':'dní'), word:''};
+}
+function frakceCerstvosti(p){
+  const spot = naDatum(p.datumSpotreby).getTime();
+  const pridano = p.pridano ? new Date(p.pridano).getTime() : (spot - 7*DEN);
+  const celkem = spot - pridano;
+  const zbyva = spot - dneso().getTime();
+  if(celkem <= 0) return zbyva > 0 ? 1 : 0;
+  return Math.max(0, Math.min(1, zbyva/celkem));
+}
+
+/* ---------- Přehledový souhrn (semafor) ---------- */
+function prepocitejSouhrn(){
+  let pr=0, br=0, ok=0;
+  stav.polozky.forEach(p=>{ const s=stavPolozky(p); if(s==='prosle')pr++; else if(s==='brzy')br++; else ok++; });
+  document.getElementById('cntProsle').textContent = pr;
+  document.getElementById('cntBrzy').textContent = br;
+  document.getElementById('cntOk').textContent = ok;
+  document.getElementById('setCnt').textContent = stav.polozky.length;
+  const badge = document.getElementById('tabBadge');
+  const upoz = pr+br;
+  badge.textContent = upoz;
+  badge.classList.toggle('show', upoz>0);
+}
+
+/* ---------- Vykreslení inventáře ---------- */
+function nastavFiltr(f){
+  aktivniFiltr = f;
+  document.querySelectorAll('#filtrChips .chip').forEach(c=>c.classList.toggle('on', c.dataset.f===f));
+  document.querySelectorAll('.summary .pill').forEach(p=>p.classList.toggle('active',
+     (p.dataset.filter==='prosle'&&f==='prosle')||(p.dataset.filter==='brzy'&&f==='brzy')||(p.dataset.filter==='ok'&&f==='ok')));
+  vykresliInventar();
+}
+function filtrujZeSouhrnu(f){ prepni('inventar'); nastavFiltr(f); }
+
+function vykresliInventar(){
+  const hledej = (document.getElementById('hledej').value||'').toLowerCase().trim();
+  const razeni = document.getElementById('razeni').value;
+  let list = stav.polozky.slice();
+
+  if(aktivniFiltr!=='vse') list = list.filter(p=>stavPolozky(p)===aktivniFiltr);
+  if(hledej) list = list.filter(p=>(p.nazev||'').toLowerCase().includes(hledej) || (p.kod||'').includes(hledej));
+
+  list.sort((a,b)=>{
+    if(razeni==='nazev') return (a.nazev||'').localeCompare(b.nazev||'','cs');
+    if(razeni==='nove') return new Date(b.pridano||0)-new Date(a.pridano||0);
+    return dnyDoSpotreby(a.datumSpotreby)-dnyDoSpotreby(b.datumSpotreby); // spotreba
+  });
+
+  const box = document.getElementById('seznam');
+  if(list.length===0){
+    const prazdno = stav.polozky.length===0;
+    box.innerHTML = `<div class="empty">
+      <div class="big">🫙</div>
+      <h3>${prazdno?'Spíž je zatím prázdná':'Nic neodpovídá filtru'}</h3>
+      <p>${prazdno?'Přidej první položku – naskenuj kód nebo zadej ručně na kartě <b>Přidat</b>.':'Zkus jiný filtr nebo hledaný výraz.'}</p>
+    </div>`;
+    return;
+  }
+
+  box.innerHTML = list.map(p=>{
+    const s = stavPolozky(p);
+    const d = popisDnu(p.datumSpotreby);
+    const pct = Math.round(frakceCerstvosti(p)*100);
+    const meta = [];
+    if(p.kategorie) meta.push(esc(p.kategorie));
+    meta.push(`${cislo(p.mnozstvi)} ${esc(p.jednotka||'ks')}`);
+    meta.push('spotřeba ' + formatDatum(p.datumSpotreby));
+    if(p.kod) meta.push('#'+esc(p.kod));
+    return `<div class="item">
+      <div class="badge ${s}">
+        <b>${d.big}</b>${d.word?`<small>${d.word}</small>`:(d.small?`<small>${d.small}</small>`:'')}
+      </div>
+      <div class="item-main">
+        <div class="item-name">${esc(p.nazev)}</div>
+        <div class="item-meta">${meta.map(m=>`<span>${m}</span>`).join('')}</div>
+        ${p.poznamka?`<div class="item-note">${esc(p.poznamka)}</div>`:''}
+        <div class="fresh-bar ${s}"><i style="width:${s==='prosle'?100:pct}%"></i></div>
+        <div class="item-actions">
+          <div class="qtybox">
+            <button aria-label="Ubrat" onclick="zmenMnozstvi('${p.id}',-1)">−</button>
+            <span>${cislo(p.mnozstvi)} ${esc(p.jednotka||'ks')}</span>
+            <button aria-label="Přidat" onclick="zmenMnozstvi('${p.id}',1)">+</button>
+          </div>
+          <button class="icon-btn" aria-label="Upravit" onclick="otevriEditaci('${p.id}')">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          </button>
+          <button class="icon-btn danger" aria-label="Smazat" onclick="smazPolozku('${p.id}')">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- Operace s položkami ---------- */
+function novyId(){ return (crypto.randomUUID?crypto.randomUUID():'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
+
+function zmenMnozstvi(id, delta){
+  const p = stav.polozky.find(x=>x.id===id); if(!p) return;
+  let m = (parseFloat(p.mnozstvi)||0) + delta;
+  if(m <= 0){
+    if(confirm(`Množství je 0 – smazat „${p.nazev}“ z inventáře?`)){ stav.polozky = stav.polozky.filter(x=>x.id!==id); }
+    else { m = 0; p.mnozstvi = 0; }
+  } else { p.mnozstvi = Math.round(m*100)/100; }
+  p.upraveno = new Date().toISOString();
+  ulozData();
+}
+function smazPolozku(id){
+  const p = stav.polozky.find(x=>x.id===id);
+  if(p && confirm(`Smazat „${p.nazev}“?`)){ stav.polozky = stav.polozky.filter(x=>x.id!==id); ulozData(); toast('Smazáno'); }
+}
+function smazVse(){
+  if(confirm('Opravdu smazat CELÝ inventář v tomto zařízení? Nevratné.')){
+    stav.polozky = []; ulozData(); toast('Vše smazáno');
+  }
+}
+
+/* ---------- Formulář: přidání ---------- */
+function ulozZFormulare(){
+  const nazev = val('fNazev').trim();
+  const spotreba = val('fSpotreba');
+  if(!nazev){ toast('Vyplň název'); document.getElementById('fNazev').focus(); return; }
+  if(!spotreba){ toast('Vyplň datum spotřeby'); document.getElementById('fSpotreba').focus(); return; }
+
+  const kod = val('fKod').trim();
+  const existuje = kod ? stav.polozky.find(p=>p.kod===kod) : null;
+  if(existuje){
+    if(confirm(`Položka s kódem ${kod} už existuje („${existuje.nazev}“). Přičíst množství k ní?`)){
+      existuje.mnozstvi = (parseFloat(existuje.mnozstvi)||0) + (parseFloat(val('fMnozstvi'))||1);
+      existuje.datumSpotreby = spotreba;
+      existuje.upraveno = new Date().toISOString();
+      ulozData(); vycistiFormular(); toast('Množství přičteno'); prepni('inventar'); return;
+    }
+  }
+
+  const now = new Date().toISOString();
+  stav.polozky.push({
+    id: novyId(),
+    nazev,
+    kod,
+    kategorie: val('fKategorie').trim(),
+    mnozstvi: parseFloat(val('fMnozstvi'))||1,
+    jednotka: val('fJednotka'),
+    datumSpotreby: spotreba,
+    poznamka: val('fPoznamka').trim(),
+    pridano: now,
+    upraveno: now
+  });
+  ulozData();
+  vycistiFormular();
+  toast('Přidáno do spíže');
+  prepni('inventar');
+}
+function vycistiFormular(){
+  ['fNazev','fKod','fKategorie','fPoznamka'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('fMnozstvi').value = 1;
+  document.getElementById('fSpotreba').value = '';
+  document.getElementById('formTitle').textContent = 'Ruční zadání položky';
+  skryjNalezenyKod();
+}
+
+/* ---------- Editace přes modál ---------- */
+function otevriEditaci(id){
+  const p = stav.polozky.find(x=>x.id===id); if(!p) return;
+  document.getElementById('eId').value = p.id;
+  document.getElementById('eNazev').value = p.nazev||'';
+  document.getElementById('eKod').value = p.kod||'';
+  document.getElementById('eKategorie').value = p.kategorie||'';
+  document.getElementById('eMnozstvi').value = p.mnozstvi;
+  document.getElementById('eJednotka').value = p.jednotka||'ks';
+  document.getElementById('eSpotreba').value = p.datumSpotreby||'';
+  document.getElementById('ePoznamka').value = p.poznamka||'';
+  document.getElementById('editModal').classList.add('show');
+}
+function zavriModal(){ document.getElementById('editModal').classList.remove('show'); }
+function ulozEditaci(){
+  const id = document.getElementById('eId').value;
+  const p = stav.polozky.find(x=>x.id===id); if(!p) return;
+  const nazev = document.getElementById('eNazev').value.trim();
+  const spotreba = document.getElementById('eSpotreba').value;
+  if(!nazev){ toast('Vyplň název'); return; }
+  if(!spotreba){ toast('Vyplň datum spotřeby'); return; }
+  p.nazev = nazev;
+  p.kod = document.getElementById('eKod').value.trim();
+  p.kategorie = document.getElementById('eKategorie').value.trim();
+  p.mnozstvi = parseFloat(document.getElementById('eMnozstvi').value)||0;
+  p.jednotka = document.getElementById('eJednotka').value;
+  p.datumSpotreby = spotreba;
+  p.poznamka = document.getElementById('ePoznamka').value.trim();
+  p.upraveno = new Date().toISOString();
+  ulozData(); zavriModal(); toast('Uloženo');
+}
+
+/* ---------- Skener (živá kamera) ---------- */
+const FORMATY = () => ([
+  Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+  Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
+  Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
+  Html5QrcodeSupportedFormats.ITF, Html5QrcodeSupportedFormats.QR_CODE
+]);
+
+function prepniSkener(){ skenerBezi ? zastavSkener() : spustSkener(); }
+
+function spustSkener(){
+  if(typeof Html5Qrcode === 'undefined'){ toast('Knihovna skeneru se nenačetla'); return; }
+  const box = (w)=> {
+    const min = Math.min(320, w-20);
+    return { width: Math.max(180,min), height: Math.max(120, Math.round(min*0.55)) };
+  };
+  skener = new Html5Qrcode('reader', { formatsToSupport: FORMATY(), verbose:false });
+  skener.start(
+    { facingMode: 'environment' },
+    { fps:10, qrbox: box, aspectRatio: 1.4 },
+    (text)=>{ najitKod(text); },
+    ()=>{}
+  ).then(()=>{
+    skenerBezi = true;
+    document.getElementById('scanBtn').textContent = 'Zastavit kameru';
+    document.getElementById('scanBtn').classList.replace('fresh','rust');
+  }).catch(err=>{
+    toast('Kameru se nepodařilo spustit');
+    console.warn(err);
+  });
+}
+function zastavSkener(){
+  if(!skener){ skenerBezi=false; return; }
+  skener.stop().then(()=>skener.clear()).catch(()=>{}).finally(()=>{
+    skenerBezi = false; skener = null;
+    const b=document.getElementById('scanBtn'); b.textContent='Spustit kameru'; b.classList.replace('rust','fresh');
+  });
+}
+function najitKod(text){
+  if(skenerBezi) zastavSkener();
+  if(navigator.vibrate) navigator.vibrate(60);
+  zpracujKod(text);
+}
+
+/* ---------- Skener z fotky ---------- */
+function skenujZFotky(ev){
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value='';
+  if(!f) return;
+  const tmp = new Html5Qrcode('reader-file', { formatsToSupport: FORMATY(), verbose:false });
+  tmp.scanFile(f, false).then(text=>{
+    zpracujKod(text); tmp.clear();
+  }).catch(()=>{
+    toast('Kód se z fotky nepodařilo přečíst'); try{tmp.clear();}catch(e){}
+  });
+}
+
+/* ---------- Zpracování načteného kódu ---------- */
+async function zpracujKod(text){
+  const kod = (text||'').trim();
+  document.getElementById('fKod').value = kod;
+  document.getElementById('formTitle').textContent = 'Nová položka z kódu';
+  ukazNalezenyKod('Načteno: '+kod);
+  prepni('pridat');
+
+  // Existuje už?
+  const ex = stav.polozky.find(p=>p.kod===kod);
+  if(ex){
+    document.getElementById('fNazev').value = ex.nazev;
+    document.getElementById('fKategorie').value = ex.kategorie||'';
+    document.getElementById('fJednotka').value = ex.jednotka||'ks';
+    ukazNalezenyKod('Znám: '+ex.nazev+' – uprav datum a ulož');
+    document.getElementById('fSpotreba').focus();
+    return;
+  }
+  // Dohledání názvu (Open Food Facts)
+  if(nast.offLookup && navigator.onLine){
+    ukazNalezenyKod('Načteno '+kod+' – hledám název…');
+    const nazev = await dohledejNazev(kod);
+    if(nazev){ document.getElementById('fNazev').value = nazev; ukazNalezenyKod('Nalezeno: '+nazev); }
+    else ukazNalezenyKod('Načteno '+kod+' – název doplň ručně');
+  }
+  document.getElementById('fNazev').focus();
+}
+function ukazNalezenyKod(t){ const el=document.getElementById('codeFound'); document.getElementById('codeFoundTxt').textContent=t; el.classList.add('show'); }
+function skryjNalezenyKod(){ document.getElementById('codeFound').classList.remove('show'); }
+
+async function dohledejNazev(kod){
+  try{
+    const url = `https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(kod)}.json`;
+    const r = await Promise.race([ fetch(url), new Promise((_,rej)=>setTimeout(()=>rej('t'),6000)) ]);
+    if(!r.ok) return null;
+    const j = await r.json();
+    if(j.status!==1) return null;
+    const p = j.product||{};
+    let n = p.product_name_cs || p.product_name || p.generic_name_cs || p.generic_name || '';
+    if(p.brands && n) n = n + ' – ' + String(p.brands).split(',')[0].trim();
+    return n || null;
+  }catch(e){ return null; }
+}
+
+/* ---------- Upozornění / notifikace ---------- */
+function prepniNotifikace(){
+  const on = document.getElementById('notifSwitch').checked;
+  if(on){
+    if(!('Notification' in window)){ toast('Prohlížeč oznámení nepodporuje'); document.getElementById('notifSwitch').checked=false; return; }
+    Notification.requestPermission().then(perm=>{
+      if(perm==='granted'){ nast.notifikace=true; ulozNastaveniZUI(); localStorage.setItem(KLIC_NAST, JSON.stringify(nast)); toast('Oznámení zapnuta'); zkontrolujUpozorneni(true); }
+      else { document.getElementById('notifSwitch').checked=false; nast.notifikace=false; toast('Oznámení nepovolena'); }
+    });
+  } else {
+    nast.notifikace=false; localStorage.setItem(KLIC_NAST, JSON.stringify(nast));
+  }
+}
+function zkontrolujUpozorneni(rucne){
+  const prosle = stav.polozky.filter(p=>stavPolozky(p)==='prosle');
+  const brzy = stav.polozky.filter(p=>stavPolozky(p)==='brzy');
+  const celkem = prosle.length + brzy.length;
+
+  if(rucne){
+    if(celkem===0){ toast('Nic nekončí, vše v pořádku 👍'); return; }
+    toast(`${prosle.length} prošlých, ${brzy.length} brzy skončí`);
+  }
+  if(celkem===0) return;
+
+  // Systémové oznámení – nanejvýš jednou denně automaticky (ručně vždy).
+  if(nast.notifikace && 'Notification' in window && Notification.permission==='granted'){
+    const dnesKlic = dneso().toISOString().slice(0,10);
+    if(!rucne && localStorage.getItem('spiz_notif_den')===dnesKlic) return;
+    localStorage.setItem('spiz_notif_den', dnesKlic);
+
+    const nazvy = [...prosle, ...brzy].slice(0,4).map(p=>p.nazev).join(', ');
+    const telo = (prosle.length?`Prošlé: ${prosle.length}. `:'') + (brzy.length?`Brzy skončí: ${brzy.length}. `:'') + (nazvy?`(${nazvy}${celkem>4?'…':''})`:'');
+    try{
+      if(navigator.serviceWorker && navigator.serviceWorker.ready){
+        navigator.serviceWorker.ready.then(reg=>reg.showNotification('Spíž – zkontroluj spotřebu', {body:telo, icon:'icon-192.png', badge:'icon-192.png', tag:'spiz-spotreba'}))
+          .catch(()=>{ new Notification('Spíž – zkontroluj spotřebu', {body:telo, icon:'icon-192.png'}); });
+      } else {
+        new Notification('Spíž – zkontroluj spotřebu', {body:telo, icon:'icon-192.png'});
+      }
+    }catch(e){}
+  }
+}
+
+/* ---------- Web: stažení z data.json ---------- */
+async function stahniZWebu(rezim){
+  try{
+    const r = await fetch('data.json?ts='+Date.now(), {cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j = await r.json();
+    const cizi = Array.isArray(j.polozky)?j.polozky:[];
+    if(rezim==='nahrad'){
+      if(!confirm(`Nahradit tvůj inventář (${stav.polozky.length}) verzí z webu (${cizi.length})?`)) return;
+      stav.polozky = cizi.map(normalizuj);
+      ulozData(); toast('Nahrazeno daty z webu');
+    } else {
+      const mapa = new Map(stav.polozky.map(p=>[p.id,p]));
+      let pridano=0, aktual=0;
+      cizi.forEach(raw=>{
+        const p = normalizuj(raw);
+        const st = mapa.get(p.id);
+        if(!st){ mapa.set(p.id,p); pridano++; }
+        else if(new Date(p.upraveno||0) > new Date(st.upraveno||0)){ mapa.set(p.id,p); aktual++; }
+      });
+      stav.polozky = [...mapa.values()];
+      ulozData(); toast(`Sloučeno: +${pridano}, aktualizováno ${aktual}`);
+    }
+  }catch(e){
+    toast('Stažení selhalo – existuje data.json na webu?'); console.warn(e);
+  }
+}
+function normalizuj(raw){
+  return {
+    id: raw.id || novyId(),
+    nazev: raw.nazev||'(bez názvu)',
+    kod: raw.kod||'',
+    kategorie: raw.kategorie||'',
+    mnozstvi: (raw.mnozstvi!=null?raw.mnozstvi:1),
+    jednotka: raw.jednotka||'ks',
+    datumSpotreby: raw.datumSpotreby||dneso().toISOString().slice(0,10),
+    poznamka: raw.poznamka||'',
+    pridano: raw.pridano||new Date().toISOString(),
+    upraveno: raw.upraveno||raw.pridano||new Date().toISOString()
+  };
+}
+
+/* ---------- Web: nahrání přes GitHub API ---------- */
+function payloadJSON(){
+  return JSON.stringify({ verze:1, aktualizovano:new Date().toISOString(), polozky: stav.polozky }, null, 2);
+}
+function b64utf8(s){ return btoa(unescape(encodeURIComponent(s))); }
+
+async function nahrajNaGithub(){
+  const g = nast.gh;
+  if(!g.owner || !g.repo || !g.token){ toast('Vyplň GitHub v Nastavení'); prepni('nastaveni'); return; }
+  const btn = document.getElementById('ghUploadBtn'); btn.disabled=true; const old=btn.textContent; btn.textContent='Nahrávám…';
+  const api = `https://api.github.com/repos/${g.owner}/${g.repo}/contents/${encodeURIComponent(g.path).replace(/%2F/g,'/')}`;
+  const headers = { 'Authorization':'Bearer '+g.token, 'Accept':'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28' };
+  try{
+    // Zjisti aktuální SHA (pokud soubor existuje)
+    let sha = null;
+    const get = await fetch(`${api}?ref=${encodeURIComponent(g.branch)}`, {headers});
+    if(get.ok){ const jj = await get.json(); sha = jj.sha; }
+    else if(get.status!==404){ throw new Error('GET '+get.status); }
+
+    const body = {
+      message: 'Aktualizace inventáře Spíž '+new Date().toLocaleString('cs-CZ'),
+      content: b64utf8(payloadJSON()),
+      branch: g.branch
+    };
+    if(sha) body.sha = sha;
+
+    const put = await fetch(api, { method:'PUT', headers, body: JSON.stringify(body) });
+    if(!put.ok){ const t=await put.text(); throw new Error('PUT '+put.status+' '+t.slice(0,120)); }
+    toast('Nahráno na web ✓');
+  }catch(e){
+    console.warn(e);
+    toast('Nahrání selhalo – zkontroluj token a práva');
+  }finally{
+    btn.disabled=false; btn.textContent=old;
+  }
+}
+
+/* ---------- Soubor: export / import ---------- */
+function exportSouboru(){
+  const blob = new Blob([payloadJSON()], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'data.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+  toast('Soubor data.json stažen');
+}
+function importSouboru(ev){
+  const f = ev.target.files && ev.target.files[0]; ev.target.value='';
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = ()=>{
+    try{
+      const j = JSON.parse(rd.result);
+      const cizi = Array.isArray(j.polozky)?j.polozky:(Array.isArray(j)?j:[]);
+      if(!confirm(`Načíst ${cizi.length} položek ze souboru? (nahradí aktuální inventář)`)) return;
+      stav.polozky = cizi.map(normalizuj);
+      ulozData(); toast('Import hotov'); prepni('inventar');
+    }catch(e){ toast('Neplatný soubor JSON'); }
+  };
+  rd.readAsText(f);
+}
+
+/* ---------- Přepínání záložek ---------- */
+function prepni(nazev){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+nazev).classList.add('active');
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+  document.getElementById('tab-'+nazev).classList.add('on');
+  if(nazev!=='pridat' && skenerBezi) zastavSkener();
+  if(nazev==='sync') osvezSyncPanel();
+  window.scrollTo({top:0, behavior:'instant' in window?'instant':'auto'});
+}
+
+/* ---------- Osvěžení UI ---------- */
+function osvezSyncPanel(){
+  document.getElementById('syncCntLocal').textContent = stav.polozky.length;
+  document.getElementById('syncLast').textContent = stav.aktualizovano ? new Date(stav.aktualizovano).toLocaleString('cs-CZ') : '—';
+  const g = nast.gh; const ok = g.owner&&g.repo&&g.token;
+  document.getElementById('syncGh').textContent = ok ? `${g.owner}/${g.repo}` : 'nenastaveno';
+}
+function osvezSyncChip(){
+  const g = nast.gh; const ok = g.owner&&g.repo&&g.token;
+  document.getElementById('syncDot').className = 'sync-dot '+(ok?'on':'');
+  document.getElementById('syncText').textContent = ok ? 'Web připojen' : 'Jen zařízení';
+}
+function osvezVse(){
+  prepocitejSouhrn();
+  vykresliInventar();
+  osvezSyncChip();
+  naplnNazvyDatalist();
+}
+function naplnNazvyDatalist(){
+  const uniq = [...new Set(stav.polozky.map(p=>p.nazev).filter(Boolean))].slice(0,60);
+  document.getElementById('katNazvy').innerHTML = uniq.map(n=>`<option>${esc(n)}</option>`).join('');
+}
+
+/* ---------- Drobnosti ---------- */
+function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function cislo(n){ n=parseFloat(n); return Number.isInteger(n)?n:(Math.round(n*100)/100); }
+function formatDatum(iso){ try{ return naDatum(iso).toLocaleDateString('cs-CZ',{day:'numeric',month:'numeric',year:'numeric'}); }catch(e){ return iso; } }
+let toastTimer;
+function toast(t){ const el=document.getElementById('toast'); el.textContent=t; el.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.classList.remove('show'),2600); }
+
+/* Zavření modálu klepnutím mimo obsah */
+document.getElementById('editModal').addEventListener('click', e=>{ if(e.target.id==='editModal') zavriModal(); });
+
+/* ---------- Start ---------- */
+function initUI(){
+  document.getElementById('prahDni').value = nast.prahDni;
+  document.getElementById('offSwitch').checked = !!nast.offLookup;
+  document.getElementById('ghOwner').value = nast.gh.owner||'';
+  document.getElementById('ghRepo').value = nast.gh.repo||'';
+  document.getElementById('ghBranch').value = nast.gh.branch||'main';
+  document.getElementById('ghPath').value = nast.gh.path||'data.json';
+  document.getElementById('ghToken').value = nast.gh.token||'';
+  const notifOn = !!nast.notifikace && ('Notification' in window) && Notification.permission==='granted';
+  document.getElementById('notifSwitch').checked = notifOn;
+}
+
+nactiVse();
+initUI();
+osvezVse();
+zkontrolujUpozorneni(false);
+
+/* Service worker */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
