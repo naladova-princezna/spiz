@@ -1,58 +1,30 @@
-// Service worker – offline režim pro aplikaci Spíž.
-// Verzi zvyš při každé změně souborů, aby se vynutila aktualizace cache.
-const CACHE = 'spiz-v1';
-
-// Soubory tvořící "skořápku" aplikace (fungují i offline).
-// Pozn.: data.json zde záměrně NENÍ – ať se vždy stahuje čerstvé ze sítě.
-const APP_SHELL = [
-  './',
-  './index.html',
-  './manifest.json',
-  './html5-qrcode.min.js',
-  './icon-192.png',
-  './icon-512.png',
-  './icon-maskable-512.png',
-  './apple-touch-icon.png',
-  './favicon-32.png'
+/* LactoSTOP — service worker (offline app shell) */
+var CACHE = "lactostop-v6";
+var ASSETS = [
+  "./","./index.html","./manifest.webmanifest",
+  "./lib/zxing.min.js",
+  "./icon-180.png","./icon-192.png","./icon-512.png"
 ];
-
-self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(APP_SHELL)).then(() => self.skipWaiting())
-  );
+self.addEventListener("install", function(e){
+  e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(ASSETS); }).then(function(){ return self.skipWaiting(); }));
 });
-
-self.addEventListener('activate', (e) => {
-  e.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
+self.addEventListener("activate", function(e){
+  e.waitUntil(caches.keys().then(function(keys){ return Promise.all(keys.map(function(k){ if(k!==CACHE) return caches.delete(k); })); }).then(function(){ return self.clients.claim(); }));
 });
-
-self.addEventListener('fetch', (e) => {
-  const req = e.request;
-  if (req.method !== 'GET') return;
-
-  const url = new URL(req.url);
-
-  // data.json a volání GitHub API vždy ze sítě (ať máme nejnovější data).
-  if (url.pathname.endsWith('/data.json') || url.hostname === 'api.github.com') {
-    e.respondWith(fetch(req).catch(() => caches.match(req)));
+self.addEventListener("fetch", function(e){
+  if(e.request.method!=="GET") return;
+  var url=new URL(e.request.url);
+  if(url.origin!==location.origin) return; // don't touch OFF API / images
+  var putCopy=function(res){ if(res && res.ok){ var copy=res.clone(); caches.open(CACHE).then(function(c){ try{ c.put(e.request,copy); }catch(_){ } }); } return res; };
+  // data.json: network-first so "Načíst z repozitáře" gets fresh data, cache as offline fallback
+  if(/data\.json$/.test(url.pathname)){
+    e.respondWith(fetch(e.request).then(putCopy).catch(function(){ return caches.match(e.request); }));
     return;
   }
-
-  // Zbytek: nejdřív cache, pak síť (a průběžně doplňuj cache).
+  // app shell: cache-first
   e.respondWith(
-    caches.match(req).then((cached) => {
-      const fromNet = fetch(req).then((res) => {
-        if (res && res.status === 200 && url.origin === self.location.origin) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-        }
-        return res;
-      }).catch(() => cached);
-      return cached || fromNet;
+    caches.match(e.request).then(function(hit){
+      return hit || fetch(e.request).then(putCopy).catch(function(){ return caches.match("./index.html"); });
     })
   );
 });
